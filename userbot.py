@@ -339,6 +339,25 @@ async def hug(e, a):
     await e.edit(f"hugs {a or 'everyone'}")
 
 
+@command("hack")
+async def hack(e, a):
+    """.hack [name] - fake hacking prank with progress bar"""
+    target = a
+    if not target and e.is_reply:
+        r = await e.get_reply_message()
+        s = await r.get_sender()
+        target = (s.first_name or "target") if s else "target"
+    target = target or "target"
+    steps = [(5, "Connecting to server"), (15, "Bypassing firewall"), (30, "Locating target"),
+             (50, "Accessing chats"), (70, "Downloading data"), (90, "Erasing traces"),
+             (100, "Hack complete")]
+    for pct, msg in steps:
+        bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+        await e.edit(f"💻 **Hacking {target}**\n`{bar}` {pct}%\n{msg}...")
+        await asyncio.sleep(1.2)
+    await e.edit(f"😂 **{target}, you have been pranked!**\nNothing was hacked. It's just a joke 😄")
+
+
 # ---------------------------------------------------------------- utilities
 _OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
         ast.Div: operator.truediv, ast.Pow: operator.pow, ast.Mod: operator.mod,
