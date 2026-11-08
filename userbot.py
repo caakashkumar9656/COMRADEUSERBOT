@@ -34,6 +34,11 @@ DEFAULT_STATE = {
     "afk_reason": "",
     "afk_since": 0,
     "replied": {},
+    "antispam": False,
+    "spam_limit": 8,
+    "spam_window": 10,
+    "whitelist": [],
+    "spam_log": [],
 }
 
 
@@ -591,6 +596,96 @@ async def dmreset(e, a):
     state["replied"] = {}
     save_state()
     await e.edit("Auto reply memory cleared.")
+
+
+# ---------------------------------------------------------------- anti-spam
+recent = {}  # user_id -> timestamps of recent messages
+
+
+async def uid_of(e, a):
+    u = await target_user(e, a)
+    if u is None:
+        return e.chat_id if e.is_private else None
+    return u if isinstance(u, int) else u.id
+
+
+@command("antispam")
+async def antispam(e, a):
+    """.antispam on|off - auto-block DM spammers"""
+    state["antispam"] = a.lower() == "on"
+    save_state()
+    await e.edit(f"Anti-spam: {'ON' if state['antispam'] else 'OFF'} "
+                 f"(block at {state['spam_limit']} messages in {state['spam_window']}s)")
+
+
+@command("spamlimit")
+async def spamlimit(e, a):
+    """.spamlimit <messages> <seconds> e.g. .spamlimit 8 10"""
+    n, s = a.split()
+    state["spam_limit"], state["spam_window"] = max(2, int(n)), max(2, int(s))
+    save_state()
+    await e.edit(f"Block at {state['spam_limit']} messages in {state['spam_window']}s.")
+
+
+@command("allow")
+async def allow(e, a):
+    """Whitelist a user from anti-spam (reply / @user / in their DM)"""
+    uid = await uid_of(e, a)
+    if uid is None:
+        return await e.edit("Reply to someone or use it in their DM.")
+    if uid not in state["whitelist"]:
+        state["whitelist"].append(uid)
+        save_state()
+    await e.edit(f"Whitelisted `{uid}`.")
+
+
+@command("disallow")
+async def disallow(e, a):
+    """Remove a user from the whitelist"""
+    uid = await uid_of(e, a)
+    if uid in state["whitelist"]:
+        state["whitelist"].remove(uid)
+        save_state()
+    await e.edit(f"Removed `{uid}` from whitelist.")
+
+
+@command("allowed")
+async def allowed(e, a):
+    """Show whitelisted user IDs"""
+    await e.edit("Whitelist: " + (", ".join(f"`{i}`" for i in state["whitelist"]) or "empty"))
+
+
+@command("spamlog")
+async def spamlog(e, a):
+    """Show recently auto-blocked spammers"""
+    log = state["spam_log"][-10:]
+    await e.edit("**Blocked spammers**\n" + ("\n".join(log) or "None yet"))
+
+
+@client.on(events.NewMessage(incoming=True, func=lambda ev: ev.is_private))
+async def spam_guard(event):
+    if not state["antispam"]:
+        return
+    sender = await event.get_sender()
+    if (sender is None or sender.bot or sender.id == 777000
+            or sender.id in state["whitelist"]
+            or getattr(sender, "contact", False)
+            or getattr(sender, "mutual_contact", False)):
+        return  # contacts, bots, Telegram and whitelisted users are never blocked
+    now = time.time()
+    hits = [t for t in recent.get(sender.id, []) if now - t < state["spam_window"]]
+    hits.append(now)
+    recent[sender.id] = hits
+    if len(hits) < state["spam_limit"]:
+        return
+    from telethon.tl.functions.contacts import BlockRequest
+    await client(BlockRequest(sender.id))
+    recent.pop(sender.id, None)
+    who = f"{sender.first_name or ''} (@{sender.username}) `{sender.id}`"
+    state["spam_log"] = (state["spam_log"] + [f"{datetime.now():%d %b %H:%M} - {who}"])[-50:]
+    save_state()
+    await client.send_message("me", f"Anti-spam blocked {who} for sending "
+                                    f"{len(hits)} messages in {state['spam_window']}s.")
 
 
 @client.on(events.NewMessage(incoming=True, func=lambda ev: ev.is_private))
